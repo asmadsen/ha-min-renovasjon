@@ -3,7 +3,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .coordinator import MinRenovasjonCoordinator
-from datetime import datetime, time
+from datetime import datetime, timedelta
 import logging
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,12 +54,11 @@ class MinRenovasjonCalendar(CoordinatorEntity, CalendarEntity):
                 if earliest_date is None or pickup_date < earliest_date:
                     earliest_date = pickup_date
                     try:
-                        start_datetime = datetime.combine(pickup_date.date(), time.min).replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-                        end_datetime = datetime.combine(pickup_date.date(), time(23, 59)).replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+                        pickup_day = pickup_date.date()
                         earliest_event = CalendarEvent(
                             summary=fraction_name,
-                            start=start_datetime,
-                            end=end_datetime,
+                            start=pickup_day,
+                            end=pickup_day + timedelta(days=1),
                         )
                     except (AttributeError, TypeError, ValueError) as e:
                         _LOGGER.warning(f"Error processing calendar event dates: {e}")
@@ -74,6 +73,10 @@ class MinRenovasjonCalendar(CoordinatorEntity, CalendarEntity):
 
         events = []
         processed_dates = set()  # Track processed dates to avoid duplicates
+
+        # Normalize the requested range to dates for all-day event comparison
+        range_start = dt_util.as_local(start_date).date() if isinstance(start_date, datetime) else start_date
+        range_end = dt_util.as_local(end_date).date() if isinstance(end_date, datetime) else end_date
 
         for fraction_data in self.coordinator.data.values():
             if not fraction_data or len(fraction_data) < 5:
@@ -91,21 +94,19 @@ class MinRenovasjonCalendar(CoordinatorEntity, CalendarEntity):
                     continue
 
                 # Create unique key combining date and fraction to allow multiple collections on same day
-                date_key = (date.date(), fraction_id)
+                pickup_day = date.date()
+                date_key = (pickup_day, fraction_id)
                 if date_key in processed_dates:
                     continue
                 processed_dates.add(date_key)
 
-                # Make dates timezone-aware for comparison and event creation
-                date_midnight = datetime.combine(date.date(), time.min).replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-                date_same_day_end = datetime.combine(date.date(), time(23, 59)).replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-
-                if start_date <= date_midnight <= end_date or start_date <= date_same_day_end <= end_date:
+                # All-day events are half-open: [start, end)
+                if range_start <= pickup_day < range_end:
                     events.append(
                         CalendarEvent(
                             summary=fraction_name,
-                            start=date_midnight,
-                            end=date_same_day_end,
+                            start=pickup_day,
+                            end=pickup_day + timedelta(days=1),
                         )
                     )
 
